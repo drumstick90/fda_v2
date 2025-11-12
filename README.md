@@ -21,6 +21,12 @@ API quick checks:
 
 Dev notes:
 - Frontend uses Vite proxy: requests to `/api/*` are forwarded to `http://localhost:8000`.
+- Optional AI summary: set one of the following environment variables in `backend/.env`:
+  - `GEMINI_API_KEY` (default model `gemini-flash-latest`)
+  - `OPENAI_API_KEY`
+  - `DEEPSEEK_API_KEY`
+  - `ANTHROPIC_API_KEY`
+  - Override model per provider with `AI_MODEL` (e.g. `models/gemini-1.5-pro-latest`)
 
 ## Current features
 - Single-drug search (OpenFDA label endpoint)

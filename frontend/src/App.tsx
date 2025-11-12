@@ -4,6 +4,8 @@ import { HomePage } from './pages/HomePage'
 import { SearchPage } from './pages/SearchPage'
 import { BatchQueryPage } from './pages/BatchQueryPage'
 import { ResultsPage } from './pages/ResultsPage'
+import { LabelAnalysisPage } from './pages/LabelAnalysisPage'
+import { IndicationSearchPage } from './pages/IndicationSearchPage'
 
 function App() {
   return (
@@ -13,6 +15,8 @@ function App() {
         <Route path="/search" element={<SearchPage />} />
         <Route path="/batch" element={<BatchQueryPage />} />
         <Route path="/results" element={<ResultsPage />} />
+        <Route path="/label-analysis" element={<LabelAnalysisPage />} />
+        <Route path="/indication-search" element={<IndicationSearchPage />} />
       </Routes>
     </Layout>
   )

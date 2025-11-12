@@ -3,6 +3,7 @@ export interface DrugResult {
   last_updated: string
   indications_and_usage: string
   indications?: string[]
+  ai_summary?: string
   generic_name?: string
   brand_names?: string[]
   manufacturer?: string

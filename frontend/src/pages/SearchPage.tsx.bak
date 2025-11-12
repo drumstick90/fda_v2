@@ -110,7 +110,7 @@ export function SearchPage() {
           {drugResult.ai_summary && (
             <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200 mb-6">
               <h3 className="text-sm font-semibold text-purple-700 mb-2 uppercase tracking-wide">AI Summary</h3>
-              <pre className="text-gray-800 leading-relaxed whitespace-pre-wrap font-mono text-sm overflow-x-auto">{drugResult.ai_summary}</pre>
+              <pre className="text-gray-800 leading-relaxed whitespace-pre-wrap font-mono text-sm overflow-x-auto">{displayResult.ai_summary}</pre>
             </div>
           )}
 
@@ -124,28 +124,28 @@ export function SearchPage() {
                 </h3>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-gray-800 leading-relaxed">
-                    {drugResult.indications_and_usage}
+                    {displayResult.indications_and_usage}
                   </p>
                 </div>
               </div>
 
               {/* Concise Indications List */}
-              {drugResult.indications && drugResult.indications.length > 0 && (
+              {displayResult.indications && displayResult.indications.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">Key Indications</h3>
                   <ul className="list-disc list-inside space-y-1 text-gray-800">
-                    {drugResult.indications.slice(0, 6).map((item, idx) => (
+                    {displayResult.indications.slice(0, 6).map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {drugResult.brand_names && drugResult.brand_names.length > 0 && (
+              {displayResult.brand_names && displayResult.brand_names.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">Brand Names</h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.brand_names.map((brand, index) => (
+                    {displayResult.brand_names.map((brand, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm"
@@ -160,24 +160,24 @@ export function SearchPage() {
 
             {/* Additional Details */}
             <div className="space-y-6">
-              {drugResult.manufacturer && (
+              {displayResult.manufacturer && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center space-x-2">
                     <Building className="w-5 h-5 text-primary-600" />
                     <span>Manufacturer</span>
                   </h3>
-                  <p className="text-gray-800">{drugResult.manufacturer}</p>
+                  <p className="text-gray-800">{displayResult.manufacturer}</p>
                 </div>
               )}
 
-              {drugResult.route && drugResult.route.length > 0 && (
+              {displayResult.route && displayResult.route.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center space-x-2">
                     <Route className="w-5 h-5 text-primary-600" />
                     <span>Route of Administration</span>
                   </h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.route.map((route, index) => (
+                    {displayResult.route.map((route, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-sm"
@@ -189,11 +189,11 @@ export function SearchPage() {
                 </div>
               )}
 
-              {drugResult.dosage_form && drugResult.dosage_form.length > 0 && (
+              {displayResult.dosage_form && displayResult.dosage_form.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Dosage Forms</h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.dosage_form.map((form, index) => (
+                    {displayResult.dosage_form.map((form, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-sm"
@@ -205,37 +205,38 @@ export function SearchPage() {
                 </div>
               )}
 
-              {drugResult.strength && drugResult.strength.length > 0 && (
+              {displayResult.strength && displayResult.strength.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Strengths</h3>
                   <div className="space-y-1">
-                    {drugResult.strength.slice(0, 5).map((strength, index) => (
+                    {displayResult.strength.slice(0, 5).map((strength, index) => (
                       <div key={index} className="text-sm text-gray-600">
                         {strength}
                       </div>
                     ))}
-                    {drugResult.strength.length > 5 && (
+                    {displayResult.strength.length > 5 && (
                       <div className="text-sm text-gray-500">
-                        +{drugResult.strength.length - 5} more...
+                        +{displayResult.strength.length - 5} more...
                       </div>
                     )}
                   </div>
                 </div>
               )}
 
-              {drugResult.application_number && (
+              {displayResult.application_number && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Application Number</h3>
-                  <p className="text-gray-800 font-mono text-sm">{drugResult.application_number}</p>
+                  <p className="text-gray-800 font-mono text-sm">{displayResult.application_number}</p>
                 </div>
               )}
             </div>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Empty State */}
-      {!drugResult && !isLoading && (
+      {!streamedResult && !drugResult && !isLoading && !isStreamingSearch && (
         <div className="text-center py-12 text-gray-500">
           <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
           <p>Enter a drug name above to search FDA database</p>

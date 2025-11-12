@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Search, Layers, Home, Download } from 'lucide-react'
+import { Search, Layers, Home, Download, TrendingUp, Pill } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -60,6 +60,30 @@ export function Layout({ children }: LayoutProps) {
               >
                 <Layers className="w-4 h-4" />
                 <span>Batch Query</span>
+              </Link>
+              
+              <Link
+                to="/label-analysis"
+                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  isActive('/label-analysis') 
+                    ? 'bg-primary-100 text-primary-700' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <TrendingUp className="w-4 h-4" />
+                <span>Label Analysis</span>
+              </Link>
+              
+              <Link
+                to="/indication-search"
+                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                  isActive('/indication-search') 
+                    ? 'bg-primary-100 text-primary-700' 
+                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                }`}
+              >
+                <Pill className="w-4 h-4" />
+                <span>By Indication</span>
               </Link>
             </nav>
           </div>
