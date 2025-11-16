@@ -104,6 +104,7 @@ export function IndicationSearchPage() {
   const [error, setError] = useState<string | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [showLogs, setShowLogs] = useState(false)
+  const [sortBy, setSortBy] = useState<'date' | 'alphabetical' | 'labels'>('date')
   const logContainerRef = useRef<HTMLDivElement>(null)
 
   const navigate = useNavigate()
@@ -181,6 +182,19 @@ export function IndicationSearchPage() {
   const handleDrugClick = (drugName: string) => {
     navigate(`/label-analysis?drug=${encodeURIComponent(drugName)}`)
   }
+
+  // Sort drugs based on selected criteria
+  const sortedDrugs = results?.drugs ? [...results.drugs].sort((a, b) => {
+    switch (sortBy) {
+      case 'alphabetical':
+        return a.drug_name.localeCompare(b.drug_name)
+      case 'labels':
+        return b.total_labels - a.total_labels // Descending
+      case 'date':
+      default:
+        return b.latest_date.localeCompare(a.latest_date) // Descending (newest first)
+    }
+  }) : []
 
   const commonSearches = ['schizophrenia', 'depression', 'bipolar', 'anxiety', 'ADHD']
 
@@ -320,9 +334,49 @@ export function IndicationSearchPage() {
       {/* Results Grid */}
       {results && results.drugs.length > 0 && (
         <div>
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Drugs</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-gray-900">Drugs</h2>
+            
+            {/* Sort Controls */}
+            <div className="flex items-center space-x-2">
+              <span className="text-sm text-gray-600">Sort by:</span>
+              <div className="flex space-x-1 bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => setSortBy('date')}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    sortBy === 'date'
+                      ? 'bg-white text-primary-700 font-medium shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  Latest Date
+                </button>
+                <button
+                  onClick={() => setSortBy('alphabetical')}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    sortBy === 'alphabetical'
+                      ? 'bg-white text-primary-700 font-medium shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  A-Z
+                </button>
+                <button
+                  onClick={() => setSortBy('labels')}
+                  className={`px-3 py-1 text-sm rounded-md transition-colors ${
+                    sortBy === 'labels'
+                      ? 'bg-white text-primary-700 font-medium shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
+                  }`}
+                >
+                  # Labels
+                </button>
+              </div>
+            </div>
+          </div>
+          
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {results.drugs.map((drug) => (
+            {sortedDrugs.map((drug) => (
               <DrugCard
                 key={drug.drug_name}
                 drug={drug}

@@ -12,7 +12,6 @@ import os
 import json
 import re
 from pathlib import Path
-from functools import lru_cache
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -23,7 +22,6 @@ PROMPTS_DIR = BASE_DIR / "prompts"
 INDICATION_TREE_PROMPT_PATH = PROMPTS_DIR / "indication_tree_prompt.txt"
 
 
-@lru_cache(maxsize=1)
 def load_indication_tree_prompt() -> str:
     try:
         return INDICATION_TREE_PROMPT_PATH.read_text(encoding="utf-8").strip()
@@ -1069,7 +1067,7 @@ async def generate_ai_summary(
                 model=model,
                 messages=messages,
                 temperature=0.3,
-                max_tokens=800,
+                max_tokens=8000,
                 response_format={"type": "json_object"} if structured_mode else None,
             )
 
@@ -1124,7 +1122,7 @@ async def generate_ai_summary(
                         "model": model,
                         "messages": messages,
                         "temperature": 0.3,
-                        "max_tokens": 800,
+                        "max_tokens": 8000,
                         **({"response_format": {"type": "json_object"}} if structured_mode else {}),
                     },
                 )
@@ -1168,7 +1166,7 @@ async def generate_ai_summary(
                     [prompt_template, input_json] if structured_mode else [f"{drug_name}\n{indications_text[:1000]}"],
                     generation_config=genai.types.GenerationConfig(
                         temperature=0.3,
-                        max_output_tokens=2048,  # Increased for structured JSON + ASCII tree
+                        max_output_tokens=8000,  # Increased for complex drugs with many indications
                     ),
                 )
                 # Check finish_reason for debugging
