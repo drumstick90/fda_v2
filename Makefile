@@ -1,6 +1,6 @@
 # FDA Search v2 - Development Commands
 
-.PHONY: help setup dev build start stop clean test lint format
+.PHONY: help setup dev build start stop restart rebuild clean test lint format logs status
 
 help: ## Show this help message
 	@echo "FDA Search v2 - Available Commands:"
@@ -30,6 +30,18 @@ start: ## Start with Docker
 stop: ## Stop Docker containers
 	@echo "🛑 Stopping containers..."
 	docker-compose down
+
+restart: ## Restart Docker containers (quick)
+	@echo "🔄 Restarting containers..."
+	docker-compose restart
+	@echo "✅ Containers restarted!"
+
+rebuild: ## Rebuild and restart containers (with code changes)
+	@echo "🔨 Rebuilding containers..."
+	docker-compose down
+	docker-compose build --no-cache
+	docker-compose up -d
+	@echo "✅ Containers rebuilt and running!"
 
 clean: ## Clean all build artifacts
 	@echo "🧹 Cleaning..."

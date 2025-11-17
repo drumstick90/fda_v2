@@ -17,11 +17,14 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:password@db:5432/fda_db
       - REDIS_URL=redis://redis:6379
+    env_file:
+      - .env
     depends_on:
       - db
       - redis
     volumes:
       - ./backend:/app
+      - ./.env:/app/.env
 
   db:
     image: postgres:15
