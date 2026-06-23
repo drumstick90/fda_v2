@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Search, Layers, Home, Download, TrendingUp, Pill } from 'lucide-react'
+import { Search, Layers, TrendingUp, Pill } from 'lucide-react'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -13,34 +13,22 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center">
+          <div className="flex flex-col gap-3 py-3 lg:flex-row lg:justify-between lg:items-center">
+            <div className="flex items-center justify-between">
               <Link to="/" className="flex items-center space-x-2">
-                <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
+                <div className="w-8 h-8 bg-primary-600 rounded-md flex items-center justify-center">
                   <Search className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-xl font-bold text-gray-900">FDA Search v2</span>
+                <span className="text-lg font-semibold text-gray-900">FDA Labels</span>
               </Link>
             </div>
             
-            <nav className="flex space-x-8">
-              <Link
-                to="/"
-                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  isActive('/') 
-                    ? 'bg-primary-100 text-primary-700' 
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
-                }`}
-              >
-                <Home className="w-4 h-4" />
-                <span>Home</span>
-              </Link>
-              
+            <nav className="flex gap-1 overflow-x-auto">
               <Link
                 to="/search"
-                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex shrink-0 items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   isActive('/search') 
                     ? 'bg-primary-100 text-primary-700' 
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -52,38 +40,38 @@ export function Layout({ children }: LayoutProps) {
               
               <Link
                 to="/batch"
-                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex shrink-0 items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   isActive('/batch') 
                     ? 'bg-primary-100 text-primary-700' 
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 <Layers className="w-4 h-4" />
-                <span>Batch Query</span>
+                <span>Batch</span>
               </Link>
               
               <Link
                 to="/label-analysis"
-                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex shrink-0 items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   isActive('/label-analysis') 
                     ? 'bg-primary-100 text-primary-700' 
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 <TrendingUp className="w-4 h-4" />
-                <span>Label Analysis</span>
+                <span>Timeline</span>
               </Link>
               
               <Link
                 to="/indication-search"
-                className={`flex items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+                className={`flex shrink-0 items-center space-x-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   isActive('/indication-search') 
                     ? 'bg-primary-100 text-primary-700' 
                     : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
                 }`}
               >
                 <Pill className="w-4 h-4" />
-                <span>By Indication</span>
+                <span>Indication</span>
               </Link>
             </nav>
           </div>
@@ -91,17 +79,14 @@ export function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {children}
       </main>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-gray-200 mt-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="text-center text-gray-600">
-            <p>© 2024 FDA Search v2. Built for fast, reliable drug data access.</p>
-            <p className="text-sm mt-2">Data provided by FDA OpenFDA API</p>
-          </div>
+      <footer className="bg-white border-t border-gray-200 mt-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-sm text-gray-500">
+          Data from OpenFDA. Results are research aids, not medical advice.
         </div>
       </footer>
     </div>

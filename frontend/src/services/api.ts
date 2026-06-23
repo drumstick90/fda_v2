@@ -1,8 +1,13 @@
 import axios from 'axios'
-import { DrugResult, BatchQueryRequest, BatchQueryResponse, SearchFilters, ApiResponse } from '../types'
+import { DrugResult, BatchQueryRequest, BatchQueryResponse } from '../types'
 
 // Use same-origin by default so Vite dev proxy can forward '/api' to backend
-const API_BASE_URL = typeof import.meta.env.VITE_API_URL !== 'undefined' ? import.meta.env.VITE_API_URL : ''
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
+
+export const buildApiUrl = (path: string): string => {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return API_BASE_URL ? `${API_BASE_URL}${normalizedPath}` : normalizedPath
+}
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -14,7 +19,9 @@ const api = axios.create({
 
 // Request interceptor for logging
 api.interceptors.request.use((config) => {
-  console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`)
+  if (import.meta.env.DEV) {
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`)
+  }
   return config
 })
 
@@ -29,26 +36,21 @@ api.interceptors.response.use(
 
 export const fdaApi = {
   // Single drug search
-  searchDrug: async (drugName: string): Promise<DrugResult> => {
-    const response = await api.get(`/api/drugs/search/${encodeURIComponent(drugName)}`)
+  searchDrug: async (drugName: string, includeAi = false): Promise<DrugResult> => {
+    const response = await api.get(`/api/drugs/search/${encodeURIComponent(drugName)}`, {
+      params: includeAi ? { include_ai: true } : undefined,
+    })
     return response.data
   },
 
-  // Advanced search with filters
-  searchDrugs: async (filters: SearchFilters, page = 1, limit = 20): Promise<ApiResponse<DrugResult[]>> => {
-    const response = await api.post(`/api/drugs/search?page=${page}&limit=${limit}`, filters)
+  analyzeLabels: async (drugName: string) => {
+    const response = await api.get(`/api/drugs/analyze-labels/${encodeURIComponent(drugName)}`)
     return response.data
   },
 
   // Batch query multiple drugs (like your antipsychotic example)
   batchQuery: async (request: BatchQueryRequest): Promise<BatchQueryResponse> => {
     const response = await api.post('/api/drugs/batch', request)
-    return response.data
-  },
-
-  // Get drug suggestions for autocomplete
-  getSuggestions: async (query: string): Promise<string[]> => {
-    const response = await api.get(`/api/drugs/suggest?q=${encodeURIComponent(query)}`)
     return response.data
   },
 
@@ -65,7 +67,18 @@ export const fdaApi = {
   getDrugLists: async (): Promise<{ [category: string]: string[] }> => {
     const response = await api.get('/api/drugs/lists')
     return response.data
-  }
+  },
+
+  getIndicationSearchStreamUrl: (indication: string, activeOnly: boolean): string => {
+    const params = new URLSearchParams()
+    if (activeOnly) {
+      params.append('active_only', 'true')
+    }
+
+    const query = params.toString()
+    const path = `/api/indications/search/${encodeURIComponent(indication)}/stream${query ? `?${query}` : ''}`
+    return buildApiUrl(path)
+  },
 }
 
 export default api

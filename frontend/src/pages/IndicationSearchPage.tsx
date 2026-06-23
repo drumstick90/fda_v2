@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search, ArrowRight, Calendar, Pill } from 'lucide-react'
+import { fdaApi } from '../services/api'
 
 type DrugSummary = {
   drug_name: string
@@ -127,14 +128,7 @@ export function IndicationSearchPage() {
     setShowLogs(true)
 
     try {
-      const params = new URLSearchParams()
-      if (activeOnly) {
-        params.append('active_only', 'true')
-      }
-
-      const url = `http://localhost:8000/api/indications/search/${encodeURIComponent(
-        searchTerm.trim()
-      )}/stream?${params.toString()}`
+      const url = fdaApi.getIndicationSearchStreamUrl(searchTerm.trim(), activeOnly)
 
       const eventSource = new EventSource(url)
 
@@ -398,4 +392,3 @@ export function IndicationSearchPage() {
     </div>
   )
 }
-

@@ -87,51 +87,145 @@ class SearchFilters(BaseModel):
 # FDA API client
 class FDAClient:
     BASE_URL = "https://api.fda.gov/drug/label.json"
+    RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+    MAX_ATTEMPTS = 3
+
+    @staticmethod
+    def _quote_search_value(value: str) -> str:
+        escaped = str(value).strip().replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+
+    @staticmethod
+    def exact_match_query(field: str, value: str) -> str:
+        return f"{field}:{FDAClient._quote_search_value(value)}"
+
+    @staticmethod
+    def drug_search_queries(drug_name: str) -> List[Dict[str, str]]:
+        return [
+            {
+                "label": "generic name",
+                "query": FDAClient.exact_match_query("openfda.generic_name", drug_name),
+            },
+            {
+                "label": "brand name",
+                "query": FDAClient.exact_match_query("openfda.brand_name", drug_name),
+            },
+            {
+                "label": "substance name",
+                "query": FDAClient.exact_match_query("openfda.substance_name", drug_name),
+            },
+        ]
+
+    @staticmethod
+    def request_params(search_query: str, limit: int, skip: int) -> Dict[str, Any]:
+        return {"search": search_query, "limit": limit, "skip": skip}
+
+    @staticmethod
+    async def get_label_page(
+        client: httpx.AsyncClient,
+        search_query: str,
+        limit: int,
+        skip: int,
+    ) -> httpx.Response:
+        last_error: Optional[Exception] = None
+
+        for attempt in range(FDAClient.MAX_ATTEMPTS):
+            try:
+                response = await client.get(
+                    FDAClient.BASE_URL,
+                    params=FDAClient.request_params(search_query, limit, skip),
+                )
+                if response.status_code not in FDAClient.RETRY_STATUS_CODES:
+                    return response
+            except httpx.RequestError as exc:
+                last_error = exc
+
+            if attempt < FDAClient.MAX_ATTEMPTS - 1:
+                await asyncio.sleep(0.4 * (2 ** attempt))
+
+        if last_error:
+            raise last_error
+
+        return response
+
+    @staticmethod
+    async def fetch_label_entries(
+        client: httpx.AsyncClient,
+        search_query: str,
+        max_records: int,
+        limit: int = 100,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, Any], Optional[int]]:
+        skip = 0
+        all_entries: List[Dict[str, Any]] = []
+        meta_info: Dict[str, Any] = {}
+
+        while True:
+            response = await FDAClient.get_label_page(client, search_query, limit, skip)
+
+            if response.status_code == 404:
+                return [], meta_info, None
+
+            if response.status_code != 200:
+                return [], meta_info, response.status_code
+
+            data = response.json()
+            meta_info = data.get('meta', {})
+            entries = data.get('results', []) or []
+
+            all_entries.extend(entries)
+
+            results_meta = meta_info.get('results', {})
+            total = results_meta.get('total')
+
+            if not entries:
+                break
+
+            skip += limit
+
+            if total is not None and skip >= total:
+                break
+
+            if len(all_entries) >= max_records:
+                break
+
+        return all_entries[:max_records], meta_info, None
     
     @staticmethod
-    async def search_drug(drug_name: str) -> DrugResult:
+    async def search_drug(drug_name: str, include_ai: bool = False) -> DrugResult:
         """Search for a single drug - mirrors your original query logic"""
-        base_query = f'{FDAClient.BASE_URL}?search=openfda.generic_name:"{drug_name}"'
-        limit = 100
-        skip = 0
         max_records = 300  # safety cap to avoid excessive paging
         all_entries: List[Dict[str, Any]] = []
         meta_info: Dict[str, Any] = {}
+        matched_by = None
+        last_http_error: Optional[int] = None
         
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                while True:
-                    paged_url = f"{base_query}&limit={limit}&skip={skip}"
-                    response = await client.get(paged_url)
-                    
-                    if response.status_code != 200:
-                        return DrugResult(
-                            drug=drug_name,
-                            last_updated='Error',
-                            indications_and_usage=f'HTTP error: {response.status_code}',
-                            indications=None
-                        )
-                    
-                    data = response.json()
-                    meta_info = data.get('meta', {})
-                    entries = data.get('results', []) or []
-                    
-                    all_entries.extend(entries)
-                    
-                    results_meta = meta_info.get('results', {})
-                    total = results_meta.get('total')
-                    
-                    if not entries:
-                        break
-                    
-                    skip += limit
-                    
-                    if total is not None and skip >= total:
-                        break
-                    
-                    if len(all_entries) >= max_records:
+                for search_option in FDAClient.drug_search_queries(drug_name):
+                    entries, meta, http_error = await FDAClient.fetch_label_entries(
+                        client,
+                        search_option["query"],
+                        max_records=max_records,
+                    )
+
+                    if http_error:
+                        last_http_error = http_error
+                        continue
+
+                    if entries:
+                        all_entries = entries
+                        meta_info = meta
+                        matched_by = search_option["label"]
                         break
                 
+                if last_http_error and not all_entries:
+                    return DrugResult(
+                        drug=drug_name,
+                        last_updated='Error',
+                        indications_and_usage=f'HTTP error: {last_http_error}',
+                        indications=None
+                    )
+
                 if not all_entries:
                     return DrugResult(
                         drug=drug_name,
@@ -170,7 +264,8 @@ class FDAClient:
                     f"\n📄 [LABEL] Selected entry for '{drug_name}': "
                     f"effective_time={best_entry.get('effective_time')}, "
                     f"version={best_entry.get('version')}, "
-                    f"total_candidates={len(all_entries)}"
+                    f"total_candidates={len(all_entries)}, "
+                    f"matched_by={matched_by or 'unknown'}"
                 )
                 
                 openfda = best_entry.get('openfda', {})
@@ -195,13 +290,13 @@ class FDAClient:
                     "application_number": get_first(openfda.get('application_number')),
                 }
                 
-                # Generate AI summary (non-blocking, optional)
                 ai_summary = None
-                try:
-                    print(f"\n🔍 [SEARCH] Processing drug: {drug_name}")
-                    ai_summary = await generate_ai_summary(drug_name, indications_text, label_metadata)
-                except Exception as e:
-                    print(f"❌ [SEARCH] AI summary generation failed (non-critical): {e}")
+                if include_ai:
+                    try:
+                        print(f"\n🔍 [SEARCH] Processing drug: {drug_name}")
+                        ai_summary = await generate_ai_summary(drug_name, indications_text, label_metadata)
+                    except Exception as e:
+                        print(f"❌ [SEARCH] AI summary generation failed (non-critical): {e}")
                 
                 return DrugResult(
                     drug=drug_name,
@@ -235,9 +330,9 @@ async def root():
     return {"message": "FDA Drug Search API v2", "status": "active"}
 
 @app.get("/api/drugs/search/{drug_name}", response_model=DrugResult)
-async def search_single_drug(drug_name: str):
+async def search_single_drug(drug_name: str, include_ai: bool = False):
     """Search for a single drug by name"""
-    result = await FDAClient.search_drug(drug_name)
+    result = await FDAClient.search_drug(drug_name, include_ai=include_ai)
     return result
 
 @app.get("/api/drugs/search/{drug_name}/stream")
@@ -250,7 +345,7 @@ async def search_single_drug_stream(drug_name: str):
             await asyncio.sleep(0.1)
             
             # Perform FDA search (simplified inline version)
-            base_query = f'{FDAClient.BASE_URL}?search=openfda.generic_name:"{drug_name}"'
+            search_query = FDAClient.exact_match_query("openfda.generic_name", drug_name)
             limit = 100
             skip = 0
             max_records = 300
@@ -258,8 +353,7 @@ async def search_single_drug_stream(drug_name: str):
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 while True:
-                    paged_url = f"{base_query}&limit={limit}&skip={skip}"
-                    response = await client.get(paged_url)
+                    response = await FDAClient.get_label_page(client, search_query, limit, skip)
                     
                     if response.status_code != 200:
                         yield f"data: {json.dumps({'step': 'error', 'message': f'FDA API error: {response.status_code}', 'status': 'error'})}\n\n"
@@ -362,7 +456,7 @@ async def search_by_indication_stream(indication: str, active_only: bool = False
             await asyncio.sleep(0.05)
             
             # Fetch all labels
-            base_query = f'{FDAClient.BASE_URL}?search=indications_and_usage:"{indication}"'
+            search_query = FDAClient.exact_match_query("indications_and_usage", indication)
             limit = 100
             skip = 0
             all_labels = []
@@ -375,8 +469,7 @@ async def search_by_indication_stream(indication: str, active_only: bool = False
                     
                     yield f"data: {json.dumps({'type': 'log', 'message': f'📦 Fetching batch {batch_count} (skip={skip}, limit={limit})...'})}\n\n"
                     
-                    paged_url = f"{base_query}&limit={limit}&skip={skip}"
-                    response = await client.get(paged_url)
+                    response = await FDAClient.get_label_page(client, search_query, limit, skip)
                     
                     if response.status_code != 200:
                         yield f"data: {json.dumps({'type': 'error', 'message': f'HTTP error {response.status_code}'})}\n\n"
@@ -546,7 +639,7 @@ async def search_by_indication(indication: str, active_only: bool = False):
     print(f"{'='*60}")
     
     # Fetch all labels matching the indication
-    base_query = f'{FDAClient.BASE_URL}?search=indications_and_usage:"{indication}"'
+    search_query = FDAClient.exact_match_query("indications_and_usage", indication)
     limit = 100
     skip = 0
     all_labels = []
@@ -556,11 +649,9 @@ async def search_by_indication(indication: str, active_only: bool = False):
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
             batch_count += 1
-            paged_url = f"{base_query}&limit={limit}&skip={skip}"
-            
             print(f"  📦 Fetching batch {batch_count} (skip={skip}, limit={limit})...")
             
-            response = await client.get(paged_url)
+            response = await FDAClient.get_label_page(client, search_query, limit, skip)
             
             if response.status_code != 200:
                 print(f"  ❌ HTTP error {response.status_code}, stopping fetch")
@@ -738,7 +829,7 @@ async def analyze_all_labels(drug_name: str):
     from collections import defaultdict
     
     # Fetch all labels
-    base_query = f'{FDAClient.BASE_URL}?search=openfda.generic_name:"{drug_name}"'
+    search_query = FDAClient.exact_match_query("openfda.generic_name", drug_name)
     limit = 100
     skip = 0
     max_records = 1000
@@ -746,8 +837,7 @@ async def analyze_all_labels(drug_name: str):
     
     async with httpx.AsyncClient(timeout=30.0) as client:
         while True:
-            paged_url = f"{base_query}&limit={limit}&skip={skip}"
-            response = await client.get(paged_url)
+            response = await FDAClient.get_label_page(client, search_query, limit, skip)
             
             if response.status_code != 200:
                 break

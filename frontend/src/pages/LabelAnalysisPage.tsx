@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Search, Calendar, FileText, TrendingUp } from 'lucide-react'
+import { fdaApi } from '../services/api'
 
 type LabelStatus = 'active' | 'likely_active' | 'outdated' | 'unknown'
 
@@ -53,13 +54,7 @@ export function LabelAnalysisPage() {
     setError(null)
 
     try {
-      const response = await fetch(`http://localhost:8000/api/drugs/analyze-labels/${encodeURIComponent(drug.trim())}`)
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
-      const data = await response.json()
+      const data = await fdaApi.analyzeLabels(drug.trim())
       setAnalysisResult(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to analyze labels')
@@ -301,4 +296,3 @@ export function LabelAnalysisPage() {
     </div>
   )
 }
-

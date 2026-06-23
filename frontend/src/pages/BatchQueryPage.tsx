@@ -15,7 +15,7 @@ interface BatchFormData {
 export function BatchQueryPage() {
   const [results, setResults] = useState<BatchQueryResponse | null>(null)
   
-  const { register, handleSubmit, setValue, watch } = useForm<BatchFormData>({
+  const { register, handleSubmit, setValue } = useForm<BatchFormData>({
     defaultValues: {
       drugList: '',
       rateLimit: 0.3,
@@ -23,8 +23,6 @@ export function BatchQueryPage() {
     }
   })
   
-  const selectedPreset = watch('usePreset')
-
   const batchMutation = useMutation({
     mutationFn: (data: BatchQueryRequest) => fdaApi.batchQuery(data),
     onSuccess: (data) => {

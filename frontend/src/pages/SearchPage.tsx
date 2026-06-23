@@ -1,78 +1,109 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Search, Calendar, Building, Pill, Route } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { Search, Building, Pill, Route, Sparkles } from 'lucide-react'
 import { fdaApi } from '../services/api'
 import { DrugResult } from '../types'
 
 export function SearchPage() {
   const [searchTerm, setSearchTerm] = useState('')
-  const [selectedDrug, setSelectedDrug] = useState<DrugResult | null>(null)
+  const [submittedTerm, setSubmittedTerm] = useState('')
+  const [aiResult, setAiResult] = useState<DrugResult | null>(null)
 
   // Search query
   const { data: drugResult, isLoading, error } = useQuery({
-    queryKey: ['drug-search', searchTerm],
-    queryFn: () => fdaApi.searchDrug(searchTerm),
-    enabled: searchTerm.length > 2,
+    queryKey: ['drug-search', submittedTerm],
+    queryFn: () => fdaApi.searchDrug(submittedTerm),
+    enabled: submittedTerm.length > 1,
     staleTime: 5 * 60 * 1000, // 5 minutes
   })
 
+  const aiSummaryMutation = useMutation({
+    mutationFn: (drugName: string) => fdaApi.searchDrug(drugName, true),
+    onSuccess: (data) => {
+      setAiResult(data)
+    },
+  })
+
+  useEffect(() => {
+    setAiResult(null)
+    aiSummaryMutation.reset()
+  }, [submittedTerm])
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
-    if (searchTerm.trim() && drugResult) {
-      setSelectedDrug(drugResult)
+    const trimmed = searchTerm.trim()
+    if (trimmed.length > 1) {
+      setSubmittedTerm(trimmed)
     }
   }
 
+  const displayedResult = aiResult ?? drugResult
+  const hasFoundLabel = displayedResult
+    && !['Not found', 'No data found'].includes(displayedResult.indications_and_usage)
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900 flex items-center space-x-2">
-          <Search className="w-8 h-8 text-primary-600" />
+        <h1 className="text-2xl font-semibold text-gray-900 flex items-center space-x-2">
+          <Search className="w-6 h-6 text-primary-600" />
           <span>Drug Search</span>
         </h1>
-        <p className="mt-2 text-gray-600">
-          Search for individual drugs to get detailed FDA information
-        </p>
       </div>
 
       {/* Search Form */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <form onSubmit={handleSearch} className="space-y-4">
-          <div>
-            <label htmlFor="search" className="block text-sm font-medium text-gray-700 mb-2">
-              Drug Name
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+        <form onSubmit={handleSearch} className="space-y-3">
+          <div className="space-y-2">
+            <label htmlFor="search" className="block text-sm font-medium text-gray-700">
+              Generic or brand name
             </label>
-            <div className="flex space-x-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 id="search"
                 type="text"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Enter drug name (e.g., risperidone, haloperidol)"
+                placeholder="e.g., risperidone, Abilify"
                 className="input-field flex-1"
               />
               <button
                 type="submit"
-                disabled={isLoading || searchTerm.length < 3}
-                className="btn-primary px-6"
+                disabled={isLoading || searchTerm.trim().length < 2}
+                className="btn-primary flex items-center justify-center gap-2 px-5"
               >
                 {isLoading ? (
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                 ) : (
                   <Search className="w-4 h-4" />
                 )}
+                <span>Search</span>
               </button>
             </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {['risperidone', 'Abilify', 'fluoxetine', 'cariprazine'].map((term) => (
+              <button
+                key={term}
+                type="button"
+                onClick={() => {
+                  setSearchTerm(term)
+                  setSubmittedTerm(term)
+                }}
+                className="rounded-md bg-gray-100 px-2.5 py-1 text-sm text-gray-700 hover:bg-gray-200"
+              >
+                {term}
+              </button>
+            ))}
           </div>
         </form>
 
         {/* Search Status */}
-        {searchTerm.length > 2 && (
-          <div className="mt-4">
+        {submittedTerm && (
+          <div className="mt-3">
             {isLoading && (
               <div className="flex items-center space-x-2 text-blue-600">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                <span>Searching FDA database...</span>
+                <span>Searching OpenFDA...</span>
               </div>
             )}
             
@@ -82,9 +113,9 @@ export function SearchPage() {
               </div>
             )}
             
-            {drugResult && !isLoading && (
-              <div className="text-green-600">
-                ✓ Found drug information for "{searchTerm}"
+            {displayedResult && !isLoading && (
+              <div className="text-sm text-green-700">
+                Found label data for "{submittedTerm}"
               </div>
             )}
           </div>
@@ -92,25 +123,42 @@ export function SearchPage() {
       </div>
 
       {/* Drug Details */}
-      {drugResult && (
+      {displayedResult && (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-          <div className="flex justify-between items-start mb-6">
+          <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-6">
             <div>
-              <h2 className="text-2xl font-bold text-gray-900 capitalize">{drugResult.drug}</h2>
-              {drugResult.generic_name && (
-                <p className="text-gray-600 mt-1">Generic: {drugResult.generic_name}</p>
+              <h2 className="text-2xl font-bold text-gray-900 capitalize">{displayedResult.drug}</h2>
+              {displayedResult.generic_name && (
+                <p className="text-gray-600 mt-1">Generic: {displayedResult.generic_name}</p>
               )}
             </div>
-            <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
-              Last Updated: {drugResult.last_updated}
-            </span>
+            <div className="flex flex-wrap items-center gap-3">
+              {hasFoundLabel && !displayedResult.ai_summary && (
+                <button
+                  type="button"
+                  onClick={() => aiSummaryMutation.mutate(submittedTerm)}
+                  disabled={aiSummaryMutation.isPending}
+                  className="btn-secondary flex items-center space-x-2"
+                >
+                  {aiSummaryMutation.isPending ? (
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
+                  ) : (
+                    <Sparkles className="w-4 h-4" />
+                  )}
+                  <span>{aiSummaryMutation.isPending ? 'Generating...' : 'Generate AI Summary'}</span>
+                </button>
+              )}
+              <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm">
+                Last Updated: {displayedResult.last_updated}
+              </span>
+            </div>
           </div>
 
           {/* AI Summary */}
-          {drugResult.ai_summary && (
+          {displayedResult.ai_summary && (
             <div className="bg-gradient-to-br from-purple-50 to-pink-50 rounded-lg p-4 border border-purple-200 mb-6">
               <h3 className="text-sm font-semibold text-purple-700 mb-2 uppercase tracking-wide">AI Summary</h3>
-              <pre className="text-gray-800 leading-relaxed whitespace-pre-wrap font-mono text-sm overflow-x-auto">{drugResult.ai_summary}</pre>
+              <pre className="text-gray-800 leading-relaxed whitespace-pre-wrap font-mono text-sm overflow-x-auto">{displayedResult.ai_summary}</pre>
             </div>
           )}
 
@@ -124,28 +172,28 @@ export function SearchPage() {
                 </h3>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-gray-800 leading-relaxed">
-                    {drugResult.indications_and_usage}
+                    {displayedResult.indications_and_usage}
                   </p>
                 </div>
               </div>
 
               {/* Concise Indications List */}
-              {drugResult.indications && drugResult.indications.length > 0 && (
+              {displayedResult.indications && displayedResult.indications.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">Key Indications</h3>
                   <ul className="list-disc list-inside space-y-1 text-gray-800">
-                    {drugResult.indications.slice(0, 6).map((item, idx) => (
+                    {displayedResult.indications.slice(0, 6).map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {drugResult.brand_names && drugResult.brand_names.length > 0 && (
+              {displayedResult.brand_names && displayedResult.brand_names.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-3">Brand Names</h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.brand_names.map((brand, index) => (
+                    {displayedResult.brand_names.map((brand, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-green-100 text-green-800 rounded-full text-sm"
@@ -160,24 +208,24 @@ export function SearchPage() {
 
             {/* Additional Details */}
             <div className="space-y-6">
-              {drugResult.manufacturer && (
+              {displayedResult.manufacturer && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center space-x-2">
                     <Building className="w-5 h-5 text-primary-600" />
                     <span>Manufacturer</span>
                   </h3>
-                  <p className="text-gray-800">{drugResult.manufacturer}</p>
+                  <p className="text-gray-800">{displayedResult.manufacturer}</p>
                 </div>
               )}
 
-              {drugResult.route && drugResult.route.length > 0 && (
+              {displayedResult.route && displayedResult.route.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2 flex items-center space-x-2">
                     <Route className="w-5 h-5 text-primary-600" />
                     <span>Route of Administration</span>
                   </h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.route.map((route, index) => (
+                    {displayedResult.route.map((route, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-sm"
@@ -189,11 +237,11 @@ export function SearchPage() {
                 </div>
               )}
 
-              {drugResult.dosage_form && drugResult.dosage_form.length > 0 && (
+              {displayedResult.dosage_form && displayedResult.dosage_form.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Dosage Forms</h3>
                   <div className="flex flex-wrap gap-2">
-                    {drugResult.dosage_form.map((form, index) => (
+                    {displayedResult.dosage_form.map((form, index) => (
                       <span
                         key={index}
                         className="px-3 py-1 bg-orange-100 text-orange-800 rounded-full text-sm"
@@ -205,28 +253,28 @@ export function SearchPage() {
                 </div>
               )}
 
-              {drugResult.strength && drugResult.strength.length > 0 && (
+              {displayedResult.strength && displayedResult.strength.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Strengths</h3>
                   <div className="space-y-1">
-                    {drugResult.strength.slice(0, 5).map((strength, index) => (
+                    {displayedResult.strength.slice(0, 5).map((strength, index) => (
                       <div key={index} className="text-sm text-gray-600">
                         {strength}
                       </div>
                     ))}
-                    {drugResult.strength.length > 5 && (
+                    {displayedResult.strength.length > 5 && (
                       <div className="text-sm text-gray-500">
-                        +{drugResult.strength.length - 5} more...
+                        +{displayedResult.strength.length - 5} more...
                       </div>
                     )}
                   </div>
                 </div>
               )}
 
-              {drugResult.application_number && (
+              {displayedResult.application_number && (
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 mb-2">Application Number</h3>
-                  <p className="text-gray-800 font-mono text-sm">{drugResult.application_number}</p>
+                  <p className="text-gray-800 font-mono text-sm">{displayedResult.application_number}</p>
                 </div>
               )}
             </div>
@@ -235,11 +283,10 @@ export function SearchPage() {
       )}
 
       {/* Empty State */}
-      {!drugResult && !isLoading && (
+      {!displayedResult && !isLoading && (
         <div className="text-center py-12 text-gray-500">
           <Search className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>Enter a drug name above to search FDA database</p>
-          <p className="text-sm mt-2">Try: risperidone, haloperidol, fluoxetine</p>
+          <p>Search for a drug to see its current FDA label information.</p>
         </div>
       )}
     </div>
