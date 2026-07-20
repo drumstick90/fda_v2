@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { DrugResult, BatchQueryRequest, BatchQueryResponse } from '../types'
+import { DrugResult, BatchQueryRequest, BatchQueryResponse, DrugSuggestion } from '../types'
 
 // Use same-origin by default so Vite dev proxy can forward '/api' to backend
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? ''
@@ -11,7 +11,7 @@ export const buildApiUrl = (path: string): string => {
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -48,6 +48,22 @@ export const fdaApi = {
     return response.data
   },
 
+  suggestDrugs: async (query: string, limit = 10): Promise<DrugSuggestion[]> => {
+    const response = await api.get('/api/drugs/suggest', {
+      params: { q: query, limit },
+    })
+    return response.data
+  },
+
+  extractIndicationHistory: async (drugName: string, labels: unknown[], apiKey?: string) => {
+    const response = await api.post('/api/drugs/extract-indication-history', {
+      drug_name: drugName,
+      labels,
+      api_key: apiKey?.trim() || undefined,
+    })
+    return response.data
+  },
+
   // Batch query multiple drugs (like your antipsychotic example)
   batchQuery: async (request: BatchQueryRequest): Promise<BatchQueryResponse> => {
     const response = await api.post('/api/drugs/batch', request)
@@ -69,14 +85,8 @@ export const fdaApi = {
     return response.data
   },
 
-  getIndicationSearchStreamUrl: (indication: string, activeOnly: boolean): string => {
-    const params = new URLSearchParams()
-    if (activeOnly) {
-      params.append('active_only', 'true')
-    }
-
-    const query = params.toString()
-    const path = `/api/indications/search/${encodeURIComponent(indication)}/stream${query ? `?${query}` : ''}`
+  getIndicationSearchStreamUrl: (indication: string): string => {
+    const path = `/api/indications/search/${encodeURIComponent(indication)}/stream`
     return buildApiUrl(path)
   },
 }

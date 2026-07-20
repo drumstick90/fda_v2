@@ -75,6 +75,17 @@ class BatchQueryResponse(BaseModel):
     errors: List[Dict[str, str]]
     execution_time: float
 
+class IndicationHistoryRequest(BaseModel):
+    drug_name: str
+    labels: List[Dict[str, Any]]
+    api_key: Optional[str] = None
+
+class DrugSuggestion(BaseModel):
+    name: str
+    kind: str
+    matched_field: str
+    label_count: int
+
 class SearchFilters(BaseModel):
     drug_name: Optional[str] = None
     manufacturer: Optional[str] = None
@@ -119,6 +130,92 @@ class FDAClient:
     @staticmethod
     def request_params(search_query: str, limit: int, skip: int) -> Dict[str, Any]:
         return {"search": search_query, "limit": limit, "skip": skip}
+
+    @staticmethod
+    def autocomplete_query(field: str, value: str) -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9\s-]", " ", value or "")
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if not cleaned:
+            return ""
+        if " " in cleaned:
+            return FDAClient.exact_match_query(field, cleaned)
+        return f"{field}:{cleaned.lower()}*"
+
+    @staticmethod
+    def _suggestion_key(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+    @staticmethod
+    async def suggest_drugs(query: str, limit: int = 10) -> List[DrugSuggestion]:
+        cleaned_query = re.sub(r"\s+", " ", (query or "").strip())
+        if len(cleaned_query) < 2:
+            return []
+
+        fields = [
+            ("openfda.generic_name", "generic", "generic_name"),
+            ("openfda.substance_name", "substance", "substance_name"),
+            ("openfda.brand_name", "brand", "brand_name"),
+        ]
+        priority = {"generic": 0, "substance": 1, "brand": 2}
+        suggestions: Dict[str, Dict[str, Any]] = {}
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for field, kind, openfda_key in fields:
+                search_query = FDAClient.autocomplete_query(field, cleaned_query)
+                if not search_query:
+                    continue
+
+                response = await FDAClient.get_label_page(client, search_query, limit=25, skip=0)
+                if response.status_code == 404:
+                    continue
+                if response.status_code != 200:
+                    continue
+
+                for entry in response.json().get("results", []) or []:
+                    names = entry.get("openfda", {}).get(openfda_key, []) or []
+                    if not isinstance(names, list):
+                        names = [names]
+
+                    for raw_name in names:
+                        display_name = re.sub(r"\s+", " ", str(raw_name or "").strip())
+                        if len(display_name) < 2:
+                            continue
+
+                        starts_with_query = display_name.lower().startswith(cleaned_query.lower())
+                        contains_query = cleaned_query.lower() in display_name.lower()
+                        if not starts_with_query and not contains_query:
+                            continue
+
+                        key = FDAClient._suggestion_key(display_name)
+                        if not key:
+                            continue
+
+                        existing = suggestions.get(key)
+                        if not existing:
+                            suggestions[key] = {
+                                "name": display_name,
+                                "kind": kind,
+                                "matched_field": field,
+                                "label_count": 1,
+                            }
+                        else:
+                            existing["label_count"] += 1
+                            if priority[kind] < priority[existing["kind"]]:
+                                existing["kind"] = kind
+                                existing["matched_field"] = field
+                            if len(display_name) < len(existing["name"]):
+                                existing["name"] = display_name
+
+        ranked = sorted(
+            suggestions.values(),
+            key=lambda item: (
+                not item["name"].lower().startswith(cleaned_query.lower()),
+                priority[item["kind"]],
+                item["name"].lower(),
+            ),
+        )
+
+        return [DrugSuggestion(**item) for item in ranked[:limit]]
 
     @staticmethod
     async def get_label_page(
@@ -335,6 +432,11 @@ async def search_single_drug(drug_name: str, include_ai: bool = False):
     result = await FDAClient.search_drug(drug_name, include_ai=include_ai)
     return result
 
+@app.get("/api/drugs/suggest", response_model=List[DrugSuggestion])
+async def suggest_drug_names(q: str = Query(..., min_length=2), limit: int = Query(10, ge=1, le=20)):
+    """Autocomplete drug names from OpenFDA label metadata with local deduplication."""
+    return await FDAClient.suggest_drugs(q, limit=limit)
+
 @app.get("/api/drugs/search/{drug_name}/stream")
 async def search_single_drug_stream(drug_name: str):
     """Search for a single drug with progress updates via SSE"""
@@ -443,7 +545,7 @@ async def search_single_drug_stream(drug_name: str):
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/indications/search/{indication}/stream")
-async def search_by_indication_stream(indication: str, active_only: bool = False):
+async def search_by_indication_stream(indication: str):
     """Search FDA labels by indication text with live SSE updates"""
     from collections import defaultdict
     import time
@@ -515,39 +617,6 @@ async def search_by_indication_stream(indication: str, active_only: bool = False
             
             yield f"data: {json.dumps({'type': 'log', 'message': f'   ✓ Grouped into {len(drugs_map)} unique drugs'})}\n\n"
             
-            # Classify
-            yield f"data: {json.dumps({'type': 'log', 'message': '🔬 Classifying labels...'})}\n\n"
-            
-            def classify_status(label: Dict[str, Any], all_drug_labels: List[Dict[str, Any]]) -> str:
-                effective_time = label.get('effective_time')
-                version = label.get('version')
-                set_id = label.get('set_id')
-                
-                if not effective_time:
-                    return 'unknown'
-                
-                try:
-                    label_date = datetime.strptime(str(effective_time), '%Y%m%d')
-                except (ValueError, TypeError):
-                    return 'unknown'
-                
-                now = datetime.now()
-                age_days = (now - label_date).days
-                
-                if set_id:
-                    same_set = [l for l in all_drug_labels if l.get('set_id') == set_id]
-                    max_version = max((l.get('version', 0) for l in same_set), default=0)
-                    is_latest = (version == max_version)
-                else:
-                    is_latest = True
-                
-                if age_days <= 730 and is_latest:
-                    return 'active'
-                elif age_days <= 1825:
-                    return 'likely_active'
-                else:
-                    return 'outdated'
-            
             def get_latest_date(labels: List[Dict[str, Any]]) -> str:
                 dates = [l.get('effective_time', '') for l in labels if l.get('effective_time')]
                 return max(dates) if dates else ''
@@ -577,33 +646,20 @@ async def search_by_indication_stream(indication: str, active_only: bool = False
                         return True
                 return False
             
+            yield f"data: {json.dumps({'type': 'log', 'message': '🔬 Summarizing labels...'})}\n\n"
+
             results = []
-            active_drugs = 0
             for drug_name, labels in drugs_map.items():
-                status_counts = defaultdict(int)
-                for label in labels:
-                    status = classify_status(label, labels)
-                    status_counts[status] += 1
-                
-                if active_only and status_counts['active'] == 0:
-                    continue
-                
-                if status_counts['active'] > 0:
-                    active_drugs += 1
-                
                 results.append({
                     'drug_name': drug_name,
                     'total_labels': len(labels),
-                    'active_count': status_counts['active'],
-                    'likely_active_count': status_counts['likely_active'],
-                    'outdated_count': status_counts['outdated'],
                     'latest_date': get_latest_date(labels),
                     'brand_names': extract_brand_names(labels),
                     'has_monotherapy': detect_monotherapy(labels),
                     'has_adjunctive': detect_adjunctive(labels),
                 })
             
-            yield f"data: {json.dumps({'type': 'log', 'message': f'   ✓ Classified {len(results)} drugs ({active_drugs} active)'})}\n\n"
+            yield f"data: {json.dumps({'type': 'log', 'message': f'   ✓ Summarized {len(results)} drugs'})}\n\n"
             
             # Sort
             yield f"data: {json.dumps({'type': 'log', 'message': '📊 Sorting by date...'})}\n\n"
@@ -627,7 +683,7 @@ async def search_by_indication_stream(indication: str, active_only: bool = False
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @app.get("/api/indications/search/{indication}")
-async def search_by_indication(indication: str, active_only: bool = False):
+async def search_by_indication(indication: str):
     """Search FDA labels by indication text, group by drug (non-streaming)"""
     from collections import defaultdict
     
@@ -703,38 +759,6 @@ async def search_by_indication(indication: str, active_only: bool = False):
     
     print(f"     ✓ Grouped into {len(drugs_map)} unique drugs")
     
-    # Classify and summarize each drug
-    def classify_status(label: Dict[str, Any], all_drug_labels: List[Dict[str, Any]]) -> str:
-        effective_time = label.get('effective_time')
-        version = label.get('version')
-        set_id = label.get('set_id')
-        
-        if not effective_time:
-            return 'unknown'
-        
-        try:
-            label_date = datetime.strptime(str(effective_time), '%Y%m%d')
-        except (ValueError, TypeError):
-            return 'unknown'
-        
-        now = datetime.now()
-        age_days = (now - label_date).days
-        
-        # Check if latest version for set_id
-        if set_id:
-            same_set = [l for l in all_drug_labels if l.get('set_id') == set_id]
-            max_version = max((l.get('version', 0) for l in same_set), default=0)
-            is_latest = (version == max_version)
-        else:
-            is_latest = True
-        
-        if age_days <= 730 and is_latest:
-            return 'active'
-        elif age_days <= 1825:
-            return 'likely_active'
-        else:
-            return 'outdated'
-    
     def get_latest_date(labels: List[Dict[str, Any]]) -> str:
         dates = [l.get('effective_time', '') for l in labels if l.get('effective_time')]
         return max(dates) if dates else ''
@@ -764,36 +788,19 @@ async def search_by_indication(indication: str, active_only: bool = False):
                 return True
         return False
     
-    print(f"\n  🔬 Classifying labels (active/likely_active/outdated)...")
+    print(f"\n  🔬 Summarizing labels...")
     results = []
-    active_drugs = 0
     for drug_name, labels in drugs_map.items():
-        # Classify all labels for this drug
-        status_counts = defaultdict(int)
-        for label in labels:
-            status = classify_status(label, labels)
-            status_counts[status] += 1
-        
-        # Skip if active_only filter is on and no active labels
-        if active_only and status_counts['active'] == 0:
-            continue
-        
-        if status_counts['active'] > 0:
-            active_drugs += 1
-        
         results.append({
             'drug_name': drug_name,
             'total_labels': len(labels),
-            'active_count': status_counts['active'],
-            'likely_active_count': status_counts['likely_active'],
-            'outdated_count': status_counts['outdated'],
             'latest_date': get_latest_date(labels),
             'brand_names': extract_brand_names(labels),
             'has_monotherapy': detect_monotherapy(labels),
             'has_adjunctive': detect_adjunctive(labels),
         })
     
-    print(f"     ✓ Classified {len(results)} drugs ({active_drugs} with active labels)")
+    print(f"     ✓ Summarized {len(results)} drugs")
     
     # Sort by latest_date descending
     print(f"\n  🔬 Detecting treatment modalities (monotherapy/adjunctive)...")
@@ -811,7 +818,6 @@ async def search_by_indication(indication: str, active_only: bool = False):
     print(f"  Indication: '{indication}'")
     print(f"  Total labels: {len(all_labels)}")
     print(f"  Unique drugs: {len(results)}")
-    print(f"  Active drugs: {active_drugs}")
     print(f"  Total time: {total_time:.2f}s")
     print(f"{'='*60}\n")
     
@@ -824,9 +830,7 @@ async def search_by_indication(indication: str, active_only: bool = False):
 
 @app.get("/api/drugs/analyze-labels/{drug_name}")
 async def analyze_all_labels(drug_name: str):
-    """Analyze all FDA labels for a drug - status distribution, timeline, unique indications"""
-    from datetime import datetime, timedelta
-    from collections import defaultdict
+    """Analyze all FDA labels for a drug without inferring active/outdated status."""
     
     # Fetch all labels
     search_query = FDAClient.exact_match_query("openfda.generic_name", drug_name)
@@ -853,47 +857,44 @@ async def analyze_all_labels(drug_name: str):
     if not all_labels:
         raise HTTPException(status_code=404, detail=f"No labels found for {drug_name}")
     
-    # Classify each label
-    def classify_status(label: Dict[str, Any]) -> str:
-        effective_time = label.get('effective_time')
-        version = label.get('version')
-        set_id = label.get('set_id')
-        
-        if not effective_time:
-            return 'unknown'
-        
-        try:
-            label_date = datetime.strptime(str(effective_time), '%Y%m%d')
-        except (ValueError, TypeError):
-            return 'unknown'
-        
-        now = datetime.now()
-        age_days = (now - label_date).days
-        
-        # Check if latest version for set_id
-        if set_id:
-            same_set = [l for l in all_labels if l.get('set_id') == set_id]
-            max_version = max((l.get('version', 0) for l in same_set), default=0)
-            is_latest = (version == max_version)
-        else:
-            is_latest = True
-        
-        if age_days <= 730 and is_latest:
-            return 'active'
-        elif age_days <= 1825:
-            return 'likely_active'
-        else:
-            return 'outdated'
-    
-    # Process labels
-    status_counts = defaultdict(int)
+    def get_first(value):
+        if isinstance(value, list):
+            return value[0] if value else None
+        return value
+
+    def get_list(value):
+        if isinstance(value, list):
+            return value
+        if value:
+            return [value]
+        return []
+
+    def build_formulation(openfda: Dict[str, Any], brand_name: str, generic_name: Optional[str]) -> str:
+        parts = []
+        dosage_forms = get_list(openfda.get('dosage_form'))
+        routes = get_list(openfda.get('route'))
+
+        if dosage_forms:
+            parts.append(', '.join(dosage_forms))
+        if routes:
+            parts.append(', '.join(routes))
+
+        if parts:
+            return ' / '.join(parts)
+
+        normalized_brand = (brand_name or '').strip().lower()
+        normalized_generic = (generic_name or '').strip().lower()
+        if normalized_brand and normalized_brand not in {'generic', normalized_generic}:
+            return f"Product family: {brand_name}"
+
+        return 'Unspecified formulation'
+
     processed_labels = []
-    unique_indications_map = {}  # Map indication text to latest effective_time
+    unique_indications_map = {}
+    formulation_keys = set()
+    version_keys = set()
     
     for label in all_labels:
-        status = classify_status(label)
-        status_counts[status] += 1
-        
         openfda = label.get('openfda', {})
         indications = label.get('indications_and_usage')
         if isinstance(indications, list) and indications:
@@ -902,44 +903,353 @@ async def analyze_all_labels(drug_name: str):
             indications_text = indications
         else:
             indications_text = ""
+
+        effective_time = str(label.get('effective_time', '') or '')
+        version = label.get('version', 0)
+        set_id = label.get('set_id', '')
+        brand_name = get_first(openfda.get('brand_name')) or 'Generic'
+        manufacturer = get_first(openfda.get('manufacturer_name')) or 'Unknown'
+        generic_name = get_first(openfda.get('generic_name'))
+        application_number = get_first(openfda.get('application_number'))
+        route = get_list(openfda.get('route'))
+        dosage_form = get_list(openfda.get('dosage_form'))
+        product_type = get_first(openfda.get('product_type'))
+        product_ndc = get_list(openfda.get('product_ndc'))
+        formulation = build_formulation(openfda, brand_name, generic_name)
+
+        formulation_keys.add((brand_name, formulation, application_number or '', product_type or ''))
+        version_keys.add((set_id, str(version)))
         
-        # Collect unique indications from active labels with their latest effective_time
-        if status == 'active' and indications_text:
+        if indications_text:
             normalized = ' '.join(indications_text.split())
-            effective_time = label.get('effective_time', '')
-            
-            # Keep the latest effective_time for this indication
-            if normalized not in unique_indications_map or effective_time > unique_indications_map[normalized]:
-                unique_indications_map[normalized] = effective_time
+            existing = unique_indications_map.get(normalized)
+            if not existing:
+                unique_indications_map[normalized] = {
+                    'text': normalized,
+                    'first_date': effective_time,
+                    'latest_date': effective_time,
+                    'label_count': 1,
+                }
+            else:
+                if effective_time and (not existing['first_date'] or effective_time < existing['first_date']):
+                    existing['first_date'] = effective_time
+                if effective_time and effective_time > existing['latest_date']:
+                    existing['latest_date'] = effective_time
+                existing['label_count'] += 1
         
         processed_labels.append({
-            'effective_time': label.get('effective_time', ''),
-            'version': label.get('version', 0),
-            'set_id': label.get('set_id', ''),
-            'brand_name': openfda.get('brand_name', [None])[0] or 'Generic',
-            'manufacturer': openfda.get('manufacturer_name', [None])[0] or 'Unknown',
-            'status': status,
+            'effective_time': effective_time,
+            'year': effective_time[:4] if len(effective_time) >= 4 else '',
+            'version': version,
+            'set_id': set_id,
+            'brand_name': brand_name,
+            'manufacturer': manufacturer,
+            'generic_name': generic_name,
+            'application_number': application_number,
+            'route': route,
+            'dosage_form': dosage_form,
+            'product_type': product_type,
+            'product_ndc': product_ndc,
+            'formulation': formulation,
             'indications_text': indications_text
         })
     
-    # Convert map to list of dicts with text and date
-    unique_indications_with_dates = [
-        {'text': text, 'latest_date': date}
-        for text, date in unique_indications_map.items()
-    ]
-    # Sort by text length (descending)
-    unique_indications_with_dates.sort(key=lambda x: len(x['text']), reverse=True)
+    unique_indications = list(unique_indications_map.values())
+    unique_indications.sort(key=lambda x: (x['first_date'] or '', len(x['text'])))
     
     return {
         'drug_name': drug_name,
         'total_labels': len(all_labels),
-        'active_count': status_counts['active'],
-        'likely_active_count': status_counts['likely_active'],
-        'outdated_count': status_counts['outdated'],
-        'unknown_count': status_counts['unknown'],
-        'unique_indications': unique_indications_with_dates,
+        'labels_with_indications': len([label for label in processed_labels if label['indications_text']]),
+        'formulation_count': len(formulation_keys),
+        'version_count': len(version_keys),
+        'unique_indications': unique_indications,
         'labels': processed_labels
     }
+
+@app.post("/api/drugs/extract-indication-history")
+async def extract_indication_history(request: IndicationHistoryRequest):
+    """Use OpenAI to normalize indication sections and identify first/latest presence."""
+    api_key = (request.api_key or os.getenv("OPENAI_API_KEY") or "").strip()
+    if not api_key:
+        raise HTTPException(status_code=400, detail="Provide an OpenAI API key or configure OPENAI_API_KEY")
+
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise HTTPException(status_code=500, detail="OpenAI Python package is not installed")
+
+    labels = []
+    for label in request.labels:
+        indications_text = (label.get('indications_text') or '').strip()
+        if not indications_text:
+            continue
+
+        labels.append({
+            "effective_time": label.get("effective_time"),
+            "year": label.get("year"),
+            "version": label.get("version"),
+            "set_id": label.get("set_id"),
+            "brand_name": label.get("brand_name"),
+            "manufacturer": label.get("manufacturer"),
+            "generic_name": label.get("generic_name"),
+            "application_number": label.get("application_number"),
+            "route": label.get("route", []),
+            "dosage_form": label.get("dosage_form", []),
+            "product_type": label.get("product_type"),
+            "product_ndc": label.get("product_ndc", []),
+            "formulation": label.get("formulation"),
+            "indications_text": indications_text,
+        })
+
+    if not labels:
+        raise HTTPException(status_code=400, detail="No indication sections were supplied")
+
+    labels.sort(key=lambda item: (str(item.get("effective_time") or ""), str(item.get("version") or "")))
+
+    latest_date = max((str(label.get("effective_time") or "") for label in labels), default="")
+    latest_labels = [label for label in labels if label.get("effective_time") == latest_date] if latest_date else []
+
+    sections_by_text: Dict[str, Dict[str, Any]] = {}
+    for label in labels:
+        normalized_text = ' '.join((label.get("indications_text") or "").split())
+        if not normalized_text:
+            continue
+
+        section = sections_by_text.setdefault(normalized_text, {
+            "indications_text": normalized_text,
+            "first_effective_time": label.get("effective_time"),
+            "latest_effective_time": label.get("effective_time"),
+            "labels": [],
+        })
+
+        effective_time = str(label.get("effective_time") or "")
+        if effective_time and (not section["first_effective_time"] or effective_time < section["first_effective_time"]):
+            section["first_effective_time"] = effective_time
+        if effective_time and effective_time > section["latest_effective_time"]:
+            section["latest_effective_time"] = effective_time
+
+        section["labels"].append({
+            "effective_time": label.get("effective_time"),
+            "year": label.get("year"),
+            "version": label.get("version"),
+            "set_id": label.get("set_id"),
+            "brand_name": label.get("brand_name"),
+            "application_number": label.get("application_number"),
+            "route": label.get("route", []),
+            "dosage_form": label.get("dosage_form", []),
+            "formulation": label.get("formulation"),
+        })
+
+    indication_sections = sorted(
+        sections_by_text.values(),
+        key=lambda item: (str(item.get("first_effective_time") or ""), str(item.get("latest_effective_time") or "")),
+    )
+
+    payload = {
+        "drug_name": request.drug_name,
+        "analysis_date": datetime.now().strftime("%Y-%m-%d"),
+        "latest_effective_time": latest_date,
+        "source_label_count": len(labels),
+        "unique_indication_section_count": len(indication_sections),
+        "indication_sections": indication_sections,
+    }
+
+    system_prompt = """You extract normalized FDA-labeled indication history from drug label sections.
+
+Return strict JSON only. Do not infer regulatory approval beyond the supplied indication text.
+
+Definitions:
+- A single indication is one distinct labeled use, condition, episode/phase, population, and treatment mode.
+- Keep formulations separate when route, dosage form, brand, product family/set_id, or application number materially changes the labeled use.
+- Version means the supplied SPL label version for a set_id/product family.
+- First appearance year is the earliest supplied section/label year where that exact normalized indication is present.
+- Still present in latest is true only if the indication is explicitly present in one or more labels whose effective_time equals latest_effective_time.
+- If an indication is absent from the latest label set, mark still_present_in_latest false and explain the guardrail basis.
+
+Output schema:
+{
+  "drug_name": "string",
+  "latest_effective_time": "YYYYMMDD",
+  "indications": [
+    {
+      "indication": "string",
+      "condition": "string",
+      "episode_or_phase": "string or null",
+      "treatment_mode": "Monotherapy | Adjunctive | Combination | Maintenance | Other | Unspecified",
+      "population": "string or null",
+      "formulations": [
+        {
+          "formulation": "string",
+          "route": ["string"],
+          "dosage_form": ["string"],
+          "brand_names": ["string"],
+          "application_numbers": ["string"],
+          "set_ids": ["string"],
+          "versions_seen": ["string"]
+        }
+      ],
+      "first_appearance_year": "YYYY or null",
+      "first_appearance_effective_time": "YYYYMMDD or null",
+      "still_present_in_latest": true,
+      "latest_presence_effective_time": "YYYYMMDD or null",
+      "guardrail_check": "short explanation citing latest label presence/absence"
+    }
+  ],
+  "latest_label_coverage": {
+    "latest_effective_time": "YYYYMMDD",
+    "latest_label_count": 0,
+    "latest_formulations": ["string"]
+  },
+  "warnings": ["string"]
+}"""
+
+    user_prompt = json.dumps(payload, ensure_ascii=False)
+
+    try:
+        client = OpenAI(api_key=api_key)
+        model = os.getenv("OPENAI_INDICATION_MODEL") or "gpt-4o-mini"
+        print(
+            "[OPENAI INDICATION EXTRACTION] "
+            f"model={model} labels={len(labels)} sections={len(indication_sections)} "
+            f"payload_chars={len(user_prompt)}"
+        )
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=8000,
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content.strip()
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        print("[OPENAI INDICATION EXTRACTION] invalid JSON response")
+        raise HTTPException(status_code=502, detail="OpenAI returned invalid JSON")
+    except Exception as exc:
+        print(f"[OPENAI INDICATION EXTRACTION] failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail=f"OpenAI extraction failed: {exc}")
+
+    def normalize_for_match(value: str) -> str:
+        return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+    def significant_terms(value: str) -> List[str]:
+        stopwords = {
+            "and", "or", "the", "for", "with", "of", "in", "to", "as", "a", "an",
+            "treatment", "therapy", "disorder", "disease", "associated", "patients",
+            "adult", "adults", "pediatric", "children",
+        }
+        return [
+            term
+            for term in normalize_for_match(value).split()
+            if len(term) > 2 and term not in stopwords
+        ]
+
+    def label_matches_indication(label: Dict[str, Any], indication: Dict[str, Any]) -> bool:
+        label_text = normalize_for_match(label.get("indications_text") or "")
+        condition = indication.get("condition") or indication.get("indication") or ""
+        condition_terms = significant_terms(condition)
+        if condition_terms and not all(term in label_text for term in condition_terms):
+            return False
+
+        if not condition_terms:
+            indication_terms = significant_terms(indication.get("indication") or "")
+            if indication_terms and not all(term in label_text for term in indication_terms[:4]):
+                return False
+
+        detail_text = normalize_for_match(
+            " ".join([
+                str(indication.get("episode_or_phase") or ""),
+                str(indication.get("treatment_mode") or ""),
+            ])
+        )
+        required_terms = []
+        if "maintenance" in detail_text:
+            required_terms.append("maintenance")
+        if "adjunctive" in detail_text or "adjunct" in detail_text:
+            required_terms.append("adjunct")
+        if "monotherapy" in detail_text:
+            required_terms.append("monotherapy")
+        if "acute" in detail_text:
+            required_terms.append("acute")
+        if "manic" in detail_text:
+            required_terms.append("manic")
+        if "mixed" in detail_text:
+            required_terms.append("mixed")
+
+        return all(term in label_text for term in required_terms)
+
+    def append_formulation_coverage(indication: Dict[str, Any], matching_labels: List[Dict[str, Any]]) -> None:
+        coverage: Dict[str, Dict[str, Any]] = {}
+        for existing in indication.get("formulations") or []:
+            formulation_name = existing.get("formulation") or "Unspecified formulation"
+            coverage[formulation_name] = {
+                "formulation": formulation_name,
+                "route": set(existing.get("route") or []),
+                "dosage_form": set(existing.get("dosage_form") or []),
+                "brand_names": set(existing.get("brand_names") or []),
+                "application_numbers": set(existing.get("application_numbers") or []),
+                "set_ids": set(existing.get("set_ids") or []),
+                "versions_seen": set(str(version) for version in (existing.get("versions_seen") or [])),
+            }
+
+        for label in matching_labels:
+            formulation_name = label.get("formulation") or "Unspecified formulation"
+            item = coverage.setdefault(formulation_name, {
+                "formulation": formulation_name,
+                "route": set(),
+                "dosage_form": set(),
+                "brand_names": set(),
+                "application_numbers": set(),
+                "set_ids": set(),
+                "versions_seen": set(),
+            })
+            item["route"].update(label.get("route") or [])
+            item["dosage_form"].update(label.get("dosage_form") or [])
+            if label.get("brand_name"):
+                item["brand_names"].add(label["brand_name"])
+            if label.get("application_number"):
+                item["application_numbers"].add(label["application_number"])
+            if label.get("set_id"):
+                item["set_ids"].add(label["set_id"])
+            if label.get("version") is not None:
+                item["versions_seen"].add(str(label["version"]))
+
+        indication["formulations"] = [
+            {
+                "formulation": item["formulation"],
+                "route": sorted(item["route"]),
+                "dosage_form": sorted(item["dosage_form"]),
+                "brand_names": sorted(item["brand_names"]),
+                "application_numbers": sorted(item["application_numbers"]),
+                "set_ids": sorted(item["set_ids"]),
+                "versions_seen": sorted(item["versions_seen"], key=lambda value: (len(value), value)),
+            }
+            for item in sorted(coverage.values(), key=lambda value: value["formulation"])
+        ]
+
+    for indication in parsed.get("indications") or []:
+        matching_labels = [
+            label
+            for label in labels
+            if label_matches_indication(label, indication)
+        ]
+        if matching_labels:
+            append_formulation_coverage(indication, matching_labels)
+
+    parsed.setdefault("drug_name", request.drug_name)
+    parsed.setdefault("latest_effective_time", latest_date)
+    parsed.setdefault("latest_label_coverage", {
+        "latest_effective_time": latest_date,
+        "latest_label_count": len(latest_labels),
+        "latest_formulations": sorted({label.get("formulation") or "Unspecified formulation" for label in latest_labels}),
+    })
+    parsed["payload_label_count"] = len(labels)
+    parsed["payload_section_count"] = len(indication_sections)
+    return parsed
 
 @app.post("/api/drugs/batch", response_model=BatchQueryResponse)
 async def batch_query_drugs(request: BatchQueryRequest):

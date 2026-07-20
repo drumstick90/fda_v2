@@ -6,9 +6,6 @@ import { fdaApi } from '../services/api'
 type DrugSummary = {
   drug_name: string
   total_labels: number
-  active_count: number
-  likely_active_count: number
-  outdated_count: number
   latest_date: string
   brand_names: string[]
   has_monotherapy: boolean
@@ -57,16 +54,6 @@ function DrugCard({ drug, onClick }: { drug: DrugSummary; onClick: () => void })
           <span className="text-gray-600">Total labels:</span>
           <span className="font-medium">{drug.total_labels}</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-green-600">Active:</span>
-          <span className="font-medium text-green-700">{drug.active_count}</span>
-        </div>
-        {drug.likely_active_count > 0 && (
-          <div className="flex justify-between">
-            <span className="text-blue-600">Likely active:</span>
-            <span className="font-medium text-blue-700">{drug.likely_active_count}</span>
-          </div>
-        )}
         <div className="flex justify-between items-center">
           <span className="text-gray-600 flex items-center space-x-1">
             <Calendar className="w-3 h-3" />
@@ -101,7 +88,6 @@ export function IndicationSearchPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [results, setResults] = useState<SearchResult | null>(null)
-  const [activeOnly, setActiveOnly] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [showLogs, setShowLogs] = useState(false)
@@ -128,7 +114,7 @@ export function IndicationSearchPage() {
     setShowLogs(true)
 
     try {
-      const url = fdaApi.getIndicationSearchStreamUrl(searchTerm.trim(), activeOnly)
+      const url = fdaApi.getIndicationSearchStreamUrl(searchTerm.trim())
 
       const eventSource = new EventSource(url)
 
@@ -251,19 +237,6 @@ export function IndicationSearchPage() {
             </div>
           </div>
 
-          {/* Filters */}
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="active-only"
-              checked={activeOnly}
-              onChange={(e) => setActiveOnly(e.target.checked)}
-              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-            />
-            <label htmlFor="active-only" className="text-sm text-gray-700">
-              Show only drugs with active labels (last 2 years)
-            </label>
-          </div>
         </form>
 
         {/* Loading State */}

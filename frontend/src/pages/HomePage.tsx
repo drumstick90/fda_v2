@@ -17,7 +17,7 @@ const workflows = [
   },
   {
     title: 'Review label history',
-    description: 'See versions, status, and indication changes.',
+    description: 'See versions, formulations, and indication changes.',
     href: '/label-analysis',
     icon: TrendingUp,
   },

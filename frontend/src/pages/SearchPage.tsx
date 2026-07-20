@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query'
 import { Search, Building, Pill, Route, Sparkles } from 'lucide-react'
 import { fdaApi } from '../services/api'
 import { DrugResult } from '../types'
+import { DrugAutocompleteInput } from '../components/DrugAutocompleteInput'
 
 export function SearchPage() {
   const [searchTerm, setSearchTerm] = useState('')
@@ -58,13 +59,13 @@ export function SearchPage() {
               Generic or brand name
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <input
+              <DrugAutocompleteInput
                 id="search"
-                type="text"
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={setSearchTerm}
+                onSelect={(term) => setSubmittedTerm(term)}
                 placeholder="e.g., risperidone, Abilify"
-                className="input-field flex-1"
+                className="flex-1"
               />
               <button
                 type="submit"

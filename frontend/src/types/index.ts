@@ -30,6 +30,13 @@ export interface BatchQueryResponse {
   execution_time: number
 }
 
+export interface DrugSuggestion {
+  name: string
+  kind: 'generic' | 'brand' | 'substance'
+  matched_field: string
+  label_count: number
+}
+
 export interface SearchFilters {
   drug_name?: string
   manufacturer?: string
