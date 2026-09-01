@@ -4,6 +4,8 @@
 **Repository:** `drumstick90/fda_v2`
 **Primary objective:** Transform an existing working clinical-data prototype into a credible, technically inspectable example of clinical AI product development, evaluation and deployment.
 
+**Implementation runbook:** [`docs/hermes/README.md`](hermes/README.md) contains the successive, gated Hermes prompts for executing this PRD.
+
 ---
 
 # 1. Product Thesis
